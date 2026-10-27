@@ -18,6 +18,7 @@ Telegram: SOCKS5 `127.0.0.1:1080`.
 2. Docker Desktop → Settings: General → Start when you sign in; Resources → Proxies → Manual, поля пустые
 3. `forti`, `cisco`, `l2tp`, `proxy`: `.env.example` → `.env`
 4. `cisco/certs/client.p12`
+5. В RDP (у клиентов) — полное имя из зоны `DOMAINS`
 
 ## .env
 

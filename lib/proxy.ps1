@@ -134,16 +134,70 @@ function Update-WinInet {
     [WinInet.Native]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
 }
 
+function Get-ProxyDomains {
+    $domains = [System.Collections.Generic.List[string]]::new()
+    foreach ($t in $Tunnels) {
+        $e = Get-DotEnv (Join-Path $Root "$($t.Name)\.env")
+        foreach ($d in (Get-List $e.DOMAINS)) { $domains.Add($d.Trim().TrimStart('.')) }
+    }
+    $envProxy = Get-DotEnv (Join-Path $Root 'proxy\.env')
+    foreach ($d in (Get-List $envProxy.BYPASS_DOMAINS)) { $domains.Add($d.Trim().TrimStart('.')) }
+    @($domains | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function ConvertTo-NetMask([int]$Len) {
+    $dec = if ($Len -le 0) { [uint32]0 } elseif ($Len -ge 32) { [uint32]::MaxValue } else { [uint32]([math]::Pow(2, 32) - [math]::Pow(2, 32 - $Len)) }
+    @(24, 16, 8, 0 | ForEach-Object { [int](($dec -shr $_) -band 255) }) -join '.'
+}
+
+function Get-ProxyNets {
+    $skip = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($n in @('172.16.0.0/12', '192.168.0.0/16') + @(Get-LanNets)) { [void]$skip.Add($n) }
+    $nets = [System.Collections.Generic.List[string]]::new()
+    foreach ($t in $Tunnels) {
+        foreach ($n in (Get-StateLines (Join-Path $Root "$($t.Name)\state\nets"))) { $nets.Add($n) }
+        $e = Get-DotEnv (Join-Path $Root "$($t.Name)\.env")
+        foreach ($n in (Get-List $e.NETS)) { $nets.Add($n) }
+    }
+    @($nets | Where-Object { $_ -and $_ -match '/' -and -not $skip.Contains($_) } | Select-Object -Unique)
+}
+
+function Write-ProxyPac {
+    $dir = Join-Path $Root 'proxy\state'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $pac = Join-Path $dir 'proxy.pac'
+    $lines = foreach ($d in (Get-ProxyDomains)) {
+        "    if (dnsDomainIs(host, '.$d') || host == '$d') return p;"
+    }
+    foreach ($cidr in (Get-ProxyNets)) {
+        $ip, $len = $cidr.Split('/')
+        $lines += "    if (isInNet(host, '$ip', '$(ConvertTo-NetMask ([int]$len))')) return p;"
+    }
+    @(
+        'function FindProxyForURL(url, host) {'
+        '  var p = "PROXY 127.0.0.1:1080";'
+        '  if (host == "localhost" || shExpMatch(host, "127.*")) return "DIRECT";'
+        '  if (isPlainHostName(host)) return p;'
+        $lines
+        '  return "DIRECT";'
+        '}'
+    ) -join "`n" | Set-Content $pac -Encoding ascii -NoNewline
+    $pac
+}
+
 function Enable-SystemProxy {
     $saved = Join-Path $Root 'proxy\state\sysproxy.json'
     if (-not (Test-Path $saved)) {
         Get-ItemProperty $InternetSettings |
-            Select-Object ProxyEnable, ProxyServer, ProxyOverride |
+            Select-Object ProxyEnable, ProxyServer, ProxyOverride, AutoConfigURL |
             ConvertTo-Json | Set-Content $saved -Encoding UTF8
     }
-    Set-ItemProperty $InternetSettings ProxyEnable 1
-    Set-ItemProperty $InternetSettings ProxyServer '127.0.0.1:1080'
-    Set-ItemProperty $InternetSettings ProxyOverride '<local>;localhost;127.*'
+    $pac = Write-ProxyPac
+    Set-ItemProperty $InternetSettings ProxyEnable 0
+    Set-ItemProperty $InternetSettings AutoConfigURL ([uri]$pac).AbsoluteUri
+    foreach ($k in 'ProxyServer', 'ProxyOverride') {
+        Remove-ItemProperty $InternetSettings $k -ErrorAction SilentlyContinue
+    }
     Update-WinInet
 }
 
@@ -152,18 +206,24 @@ function Disable-SystemProxy {
     if (Test-Path $saved) {
         $p = Get-Content $saved -Raw | ConvertFrom-Json
         Set-ItemProperty $InternetSettings ProxyEnable ([int]$p.ProxyEnable)
-        foreach ($k in 'ProxyServer', 'ProxyOverride') {
-            if ($null -ne $p.$k) { Set-ItemProperty $InternetSettings $k $p.$k }
+        foreach ($k in 'ProxyServer', 'ProxyOverride', 'AutoConfigURL') {
+            if ($null -ne $p.$k -and "$($p.$k)") { Set-ItemProperty $InternetSettings $k $p.$k }
             else { Remove-ItemProperty $InternetSettings $k -ErrorAction SilentlyContinue }
         }
         Remove-Item $saved
-    } elseif ((Get-ItemProperty $InternetSettings).ProxyServer -eq '127.0.0.1:1080') {
-        Set-ItemProperty $InternetSettings ProxyEnable 0
+    } else {
+        $cur = Get-ItemProperty $InternetSettings
+        if ($cur.ProxyServer -eq '127.0.0.1:1080' -or "$($cur.AutoConfigURL)" -like '*work-hammer*proxy.pac') {
+            Set-ItemProperty $InternetSettings ProxyEnable 0
+            foreach ($k in 'ProxyServer', 'ProxyOverride', 'AutoConfigURL') {
+                Remove-ItemProperty $InternetSettings $k -ErrorAction SilentlyContinue
+            }
+        }
     }
     Update-WinInet
 }
 
 function Test-SystemProxy {
     $p = Get-ItemProperty $InternetSettings
-    $p.ProxyEnable -eq 1 -and $p.ProxyServer -eq '127.0.0.1:1080'
+    "$($p.AutoConfigURL)" -like '*proxy.pac'
 }

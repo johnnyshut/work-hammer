@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 param(
     [Parameter(Position = 0)][ValidateSet('up', 'down', 'status')][string]$Action = 'status',
-    [Parameter(Position = 1)][ValidateSet('all', 'forti', 'cisco', 'l2tp', 'proxy', 'dashboard')][string]$Target = 'all',
+    [Parameter(Position = 1)][ValidateSet('all', 'forti', 'cisco', 'l2tp', 'proxy', 'dns', 'dashboard')][string]$Target = 'all',
     [switch]$Json
 )
 
@@ -28,6 +28,49 @@ function Get-List([string]$Value, [string]$Separator = '[,\s]+') {
 }
 
 . (Join-Path $Root 'lib\proxy.ps1')
+
+function Invoke-HostNet([string]$Action) {
+    $file = Join-Path $Root 'lib\hostnet.ps1'
+    $fwd = Join-Path $Root 'wsl\forward.sh'
+    if ($Action -eq 'up' -and (Test-Path $fwd)) {
+        wsl.exe -e bash (ConvertTo-WslPath $fwd) *> $null
+    } else {
+        wsl.exe -e bash (ConvertTo-WslPath $fwd) stop *> $null
+    }
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).
+        IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $args = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $file, '-Action', $Action, '-Root', $Root)
+    if ($admin) { & powershell.exe @args }
+    else { Start-Process powershell.exe -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList $args }
+    if ($Action -eq 'up') { Start-UserDnsProxy }
+}
+
+function Test-DnsProxy {
+    $null -ne (Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*dnsproxy.py*' } |
+        Select-Object -First 1)
+}
+
+function Stop-UserDnsProxy {
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*dnsproxy.py*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+function Start-UserDnsProxy {
+    $gw = @((wsl.exe -e hostname -I 2>$null) -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' }) | Select-Object -First 1
+    $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
+    if (-not $gw -or -not $python) { return 'failed' }
+    Stop-UserDnsProxy
+    $log = Join-Path $Root 'proxy\state'
+    New-Item -ItemType Directory -Force -Path $log | Out-Null
+    Start-Process $python -WindowStyle Hidden -ArgumentList @(
+        (Join-Path $Root 'lib\dnsproxy.py'), $gw, '5353'
+    ) -RedirectStandardOutput "$log\dnsproxy.log" -RedirectStandardError "$log\dnsproxy.err"
+    ipconfig /flushdns | Out-Null
+    Start-Sleep -Milliseconds 400
+    if (Test-DnsProxy) { 'up' } else { 'failed' }
+}
 
 function Invoke-Compose { & docker compose --project-directory $Root @args *> $null }
 
@@ -75,6 +118,7 @@ function Write-StatusFile([string]$Name, [string]$Value) {
 function Get-State([string]$Name) {
     switch ($Name) {
         'proxy' { if ((Test-Container 'work-hammer-proxy') -and (Test-Port 1080)) { 'up' } else { 'stopped' } }
+        'dns' { if (Test-DnsProxy) { 'up' } else { 'stopped' } }
         'dashboard' { if (Test-Port 3456) { 'up' } else { 'stopped' } }
         'cisco' {
             $s = Read-StatusFile 'cisco'
@@ -190,6 +234,7 @@ function Invoke-Up([string]$Name) {
     Write-Host ('{0,-10}' -f $Name) -NoNewline
     $s = switch ($Name) {
         'proxy' { Start-Proxy }
+        'dns' { Start-UserDnsProxy }
         'dashboard' { Start-Dashboard }
         default { Start-Tunnel $Name }
     }
@@ -200,6 +245,7 @@ function Invoke-Up([string]$Name) {
 function Invoke-Down([string]$Name) {
     switch ($Name) {
         'proxy' { Stop-Proxy }
+        'dns' { Stop-UserDnsProxy }
         'dashboard' { Stop-Dashboard }
         default { Stop-Tunnel $Name }
     }
@@ -219,7 +265,7 @@ if ($Action -eq 'status') {
 
 switch ($Action) {
     'status' {
-        $rows = foreach ($n in @($Tunnels.Name) + 'proxy' + 'dashboard') {
+        $rows = foreach ($n in @($Tunnels.Name) + 'proxy' + 'dns' + 'dashboard') {
             [pscustomobject]@{ id = $n; state = Get-State $n }
         }
         if ($Json) {
@@ -232,6 +278,7 @@ switch ($Action) {
     'down' {
         if ($Target -eq 'all') { $names = @('proxy') + @($Tunnels.Name) }
         foreach ($n in $names) { Invoke-Down $n }
+        if ($Target -eq 'all') { Invoke-HostNet 'down' }
     }
     'up' {
         if ($names -contains 'cisco' -or $names -contains 'proxy') { Start-Docker }
@@ -241,6 +288,7 @@ switch ($Action) {
             if ((Invoke-Up $n) -ne 'up') { $failed++ }
         }
         if ($Target -in 'forti', 'cisco', 'l2tp' -and (Get-State 'proxy') -eq 'up') { Invoke-Up 'proxy' | Out-Null }
+        if ($Target -eq 'all' -or $Target -in 'forti', 'l2tp') { Invoke-HostNet 'up' }
         exit $failed
     }
 }
