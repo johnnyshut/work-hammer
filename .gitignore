@@ -1,0 +1,5 @@
+.env
+state/
+oscript_modules/
+cisco/certs/*
+!cisco/certs/README.md

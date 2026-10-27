@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>VPN</title>
+  {{ Модель.Скрипты }}
+  <style>
+    body { margin: 0; background: #0c0e12; color: #e8eaed; font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+    main { max-width: 520px; margin: 40px auto; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 10px 8px; border-bottom: 1px solid #222833; }
+    td:last-child { text-align: right; white-space: nowrap; }
+    tr.all td { border-bottom: 2px solid #222833; font-weight: 600; }
+    button { background: #14181f; color: #e8eaed; border: 1px solid #222833; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+    button:hover { border-color: #6b7280; }
+    button:disabled { opacity: .35; cursor: default; }
+    .up { color: #34d399; }
+    .connecting { color: #fbbf24; }
+    .stopped { color: #6b7280; }
+    .failed, .timeout { color: #f87171; }
+  </style>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ Модель.ТокенCSRF }}"}'>
+  <main>
+@Контент
+  </main>
+</body>
+</html>

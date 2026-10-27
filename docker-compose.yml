@@ -1,0 +1,33 @@
+name: work-hammer
+
+services:
+  cisco:
+    image: ghcr.io/johnnyshut/work-hammer/cisco:latest
+    pull_policy: daily
+    container_name: work-hammer-cisco
+    restart: "no"
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun]
+    env_file: ./cisco/.env
+    entrypoint: ["bash", "/app/entrypoint.sh"]
+    volumes:
+      - ./cisco:/app:ro
+      - ./cisco/certs:/certs:ro
+      - ./cisco/state:/state
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qx up /state/status && ip link show tun0 >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  proxy:
+    image: ghcr.io/sagernet/sing-box:v1.14.4
+    container_name: work-hammer-proxy
+    restart: unless-stopped
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+    volumes:
+      - ./proxy/state:/etc/sing-box:ro
+    ports:
+      - "127.0.0.1:1080:1080"
+    extra_hosts:
+      - host.docker.internal:host-gateway

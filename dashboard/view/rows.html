@@ -1,0 +1,25 @@
+<table>
+  <tr class="all">
+    <td>Все</td>
+    <td class="{{ Модель.КлассВсех }}">{{ Модель.Все }}</td>
+    <td>
+      <button hx-post="/do/up/all" hx-target="#rows"{{ Модель.Блок }}>↻</button>
+      <button hx-post="/do/down/all" hx-target="#rows"{{ Модель.Блок }}>■</button>
+    </td>
+  </tr>
+{% Для Каждого С Из Модель.Строки Цикл %}
+  <tr>
+    <td>{{ С.Имя }}</td>
+    <td class="{{ С.Состояние }}">{{ С.Состояние }}</td>
+    <td>
+      <button hx-post="/do/up/{{ С.Ид }}" hx-target="#rows"{{ Модель.Блок }}>↻</button>
+      <button hx-post="/do/down/{{ С.Ид }}" hx-target="#rows"{{ Модель.Блок }}>■</button>
+    </td>
+  </tr>
+{% КонецЦикла; %}
+  <tr>
+    <td>Системный прокси</td>
+    <td class="{{ Модель.СистемныйПрокси }}">{{ Модель.СистемныйПрокси }}</td>
+    <td></td>
+  </tr>
+</table>

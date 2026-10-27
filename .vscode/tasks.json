@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "up all",
+      "type": "process",
+      "command": "${workspaceFolder}\\morning.bat",
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "down all",
+      "type": "process",
+      "command": "${workspaceFolder}\\stop.bat",
+      "problemMatcher": []
+    },
+    {
+      "label": "status",
+      "type": "process",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\vpn.ps1", "status"],
+      "problemMatcher": []
+    }
+  ]
+}
