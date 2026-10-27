@@ -71,7 +71,7 @@ function New-ProxyConfig {
             tag       = 'bypass'
             outbounds = @($nodes | ForEach-Object { $_.tag })
             url       = 'https://www.gstatic.com/generate_204'
-            interval  = '3m'
+            interval  = '15s'
         }
         $outbounds += $nodes
     }
@@ -159,6 +159,8 @@ function Get-ProxyNets {
         $e = Get-DotEnv (Join-Path $Root "$($t.Name)\.env")
         foreach ($n in (Get-List $e.NETS)) { $nets.Add($n) }
     }
+    $proxy = Get-DotEnv (Join-Path $Root 'proxy\.env')
+    foreach ($n in (Get-List $proxy.BYPASS_NETS)) { $nets.Add($n) }
     @($nets | Where-Object { $_ -and $_ -match '/' -and -not $skip.Contains($_) } | Select-Object -Unique)
 }
 
@@ -185,6 +187,28 @@ function Write-ProxyPac {
     $pac
 }
 
+function Stop-PacServer {
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like '*pacserver.ps1*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+function Start-PacServer {
+    $port = 8079
+    $pac = Join-Path $Root 'proxy\state\proxy.pac'
+    if (-not (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)) {
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $Root 'lib\pacserver.ps1'),
+            '-Pac', $pac, '-Port', $port
+        ) | Out-Null
+        for ($i = 0; $i -lt 20; $i++) {
+            if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { break }
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    "http://127.0.0.1:$port/proxy.pac"
+}
+
 function Enable-SystemProxy {
     $saved = Join-Path $Root 'proxy\state\sysproxy.json'
     if (-not (Test-Path $saved)) {
@@ -192,9 +216,10 @@ function Enable-SystemProxy {
             Select-Object ProxyEnable, ProxyServer, ProxyOverride, AutoConfigURL |
             ConvertTo-Json | Set-Content $saved -Encoding UTF8
     }
-    $pac = Write-ProxyPac
+    Write-ProxyPac | Out-Null
+    $url = Start-PacServer
     Set-ItemProperty $InternetSettings ProxyEnable 0
-    Set-ItemProperty $InternetSettings AutoConfigURL ([uri]$pac).AbsoluteUri
+    Set-ItemProperty $InternetSettings AutoConfigURL $url
     foreach ($k in 'ProxyServer', 'ProxyOverride') {
         Remove-ItemProperty $InternetSettings $k -ErrorAction SilentlyContinue
     }
@@ -213,17 +238,18 @@ function Disable-SystemProxy {
         Remove-Item $saved
     } else {
         $cur = Get-ItemProperty $InternetSettings
-        if ($cur.ProxyServer -eq '127.0.0.1:1080' -or "$($cur.AutoConfigURL)" -like '*work-hammer*proxy.pac') {
+        if ($cur.ProxyServer -eq '127.0.0.1:1080' -or "$($cur.AutoConfigURL)" -like '*127.0.0.1:8079*') {
             Set-ItemProperty $InternetSettings ProxyEnable 0
             foreach ($k in 'ProxyServer', 'ProxyOverride', 'AutoConfigURL') {
                 Remove-ItemProperty $InternetSettings $k -ErrorAction SilentlyContinue
             }
         }
     }
+    Stop-PacServer
     Update-WinInet
 }
 
 function Test-SystemProxy {
     $p = Get-ItemProperty $InternetSettings
-    "$($p.AutoConfigURL)" -like '*proxy.pac'
+    "$($p.AutoConfigURL)" -like '*127.0.0.1:8079*'
 }

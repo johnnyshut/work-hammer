@@ -24,7 +24,9 @@ server="$(env_get VPN_SERVER)"
 user="$(env_get VPN_USER)"
 pass="$(env_get VPN_PASSWORD)"
 psk="$(env_get L2TP_PSK)"
-server_ip="$(getent ahostsv4 "$server" | awk '{print $1; exit}')"
+resolve() { dig +time=3 +tries=1 +short @"$1" "$2" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1; }
+server_ip="$(resolve 1.1.1.1 "$server")"
+[[ -n "$server_ip" ]] || server_ip="$(resolve 8.8.8.8 "$server")"
 [[ -n "$server_ip" ]] || exit 1
 local_ip="$(ip -4 route get "$server_ip" | sed -n 's/.* src \([^ ]*\).*/\1/p')"
 

@@ -9,6 +9,7 @@ services:
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     env_file: ./cisco/.env
+    dns: [1.1.1.1, 8.8.8.8]
     entrypoint: ["bash", "/app/entrypoint.sh"]
     volumes:
       - ./cisco:/app:ro

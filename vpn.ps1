@@ -183,7 +183,12 @@ function Start-Proxy {
     $dir = Join-Path $Root 'proxy\state'
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     [IO.File]::WriteAllText((Join-Path $dir 'config.json'), (New-ProxyConfig))
-    Invoke-Compose up -d --force-recreate proxy
+    $running = docker inspect -f '{{.State.Running}}' work-hammer-proxy 2>$null
+    if ($running -eq 'true') {
+        docker kill --signal=HUP work-hammer-proxy *> $null
+    } else {
+        Invoke-Compose up -d proxy
+    }
 
     for ($i = 0; $i -lt 15; $i++) {
         Start-Sleep -Seconds 1

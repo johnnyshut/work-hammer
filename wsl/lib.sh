@@ -12,9 +12,10 @@ env_get() { grep -E "^$1=" "$DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr
 iface_ip() { ip -4 -o addr show dev "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1; }
 
 wait_iface() {
-  local i
+  local i pid="${2:-}"
   for ((i = 0; i < $1; i++)); do
     [[ -n "$(iface_ip)" ]] && return 0
+    [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null && return 1
     sleep 1
   done
   return 1

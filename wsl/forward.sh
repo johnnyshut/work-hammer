@@ -34,6 +34,8 @@ for iface in forti0 l2tp0; do
   ensure -t nat POSTROUTING -o "$iface" -j MASQUERADE
   ensure FORWARD -i eth0 -o "$iface" -j ACCEPT
   ensure FORWARD -i "$iface" -o eth0 -j ACCEPT
+  ensure -t mangle OUTPUT -o "$iface" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1000
+  ensure -t mangle FORWARD -o "$iface" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1000
 done
 
 if ip link show l2tp0 >/dev/null 2>&1; then
@@ -80,7 +82,6 @@ if ! command -v redsocks >/dev/null; then
   sudo -n systemctl disable --now redsocks >/dev/null 2>&1 || true
 fi
 sudo -n systemctl stop redsocks >/dev/null 2>&1 || true
-sudo -n pkill -x redsocks 2>/dev/null || true
 
 cat >/tmp/work-hammer/redsocks.conf <<'EOF'
 base {
@@ -105,18 +106,14 @@ redsocks {
 }
 EOF
 sudo -n redsocks -t -c /tmp/work-hammer/redsocks.conf
-sudo -n pkill -x redsocks 2>/dev/null || true
-sudo -n redsocks -c /tmp/work-hammer/redsocks.conf
-
-while read -r rule; do
-  [[ -n "$rule" ]] || continue
-  # shellcheck disable=SC2086
-  sudo -n iptables -t nat $rule || true
-done < <(sudo -n iptables -t nat -S | grep work-hammer | sed 's/^-A /-D /')
+if ! ss -lnt | grep -q ':12345'; then
+  sudo -n redsocks -c /tmp/work-hammer/redsocks.conf
+fi
 
 {
   [[ -f "$DIR/../cisco/state/nets" ]] && cat "$DIR/../cisco/state/nets"
   grep -E '^NETS=' "$DIR/../cisco/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr ',' '\n'
+  grep -E '^BYPASS_NETS=' "$DIR/../proxy/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr ',' '\n'
 } | while read -r net; do
   net="${net//$'\r'/}"
   net="${net// /}"
