@@ -13,6 +13,22 @@ for part in crt key; do
     || { status failed; exit 1; }
 done
 
+# Docker's 127.0.0.11 stub often returns SERVFAIL at container start.
+# Point resolv at public DNS and pin the gateway in /etc/hosts so openconnect
+# still uses the hostname for SNI/cert checks.
+printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' >/etc/resolv.conf
+host="$VPN_SERVER"
+host="${host%%/*}"
+host="${host%%:*}"
+ip=""
+for _ in 1 2 3 4 5 6 7 8; do
+  ip="$(getent ahosts "$host" 2>/dev/null | awk '{print $1; exit}')"
+  [[ -n "$ip" ]] && break
+  sleep 1
+done
+[[ -n "$ip" ]] || { echo "resolve $host failed"; status failed; exit 1; }
+grep -q "[[:space:]]$host\$" /etc/hosts 2>/dev/null || printf '%s %s\n' "$ip" "$host" >>/etc/hosts
+
 microsocks -p 1080 >/dev/null 2>&1 &
 
 printf '%s\n' "$VPN_PASSWORD" | openconnect \

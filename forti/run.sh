@@ -18,9 +18,16 @@ host="${server%%:*}"
 port="${server#*:}"
 [[ "$port" == "$server" ]] && port=443
 cert="$(env_get TRUSTED_CERT)"
-resolve() { dig +time=3 +tries=1 +short @"$1" "$2" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1; }
-ipaddr="$(resolve 1.1.1.1 "$host")"
-[[ -n "$ipaddr" ]] || ipaddr="$(resolve 8.8.8.8 "$host")"
+# UDP/53 to public resolvers is often filtered from WSL; prefer TCP.
+resolve() { dig +tcp +time=3 +tries=1 +short @"$1" "$2" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1; }
+ipaddr=""
+for _ in 1 2 3 4 5; do
+  ipaddr="$(resolve 1.1.1.1 "$host")"
+  [[ -n "$ipaddr" ]] || ipaddr="$(resolve 8.8.8.8 "$host")"
+  [[ -n "$ipaddr" ]] || ipaddr="$(dig +tcp +time=3 +tries=1 +short "$host" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1)"
+  [[ -n "$ipaddr" ]] && break
+  sleep 1
+done
 [[ -n "$ipaddr" ]] || { echo "resolve $host failed"; exit 1; }
 
 umask 077
